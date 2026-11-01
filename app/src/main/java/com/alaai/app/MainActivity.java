@@ -16,6 +16,12 @@ import android.content.Context;
 import android.widget.*;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.OutputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import org.json.JSONObject;
 
 public class MainActivity extends Activity {
 
@@ -143,19 +149,75 @@ public class MainActivity extends Activity {
     void sendMessage() {
         String text = input.getText().toString().trim();
 
-        if(text.isEmpty()) return;
+        if (text.isEmpty()) return;
 
-        addMessage(text,true);
+        addMessage(text, true);
         input.setText("");
 
         InputMethodManager imm =
             (InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
 
-        imm.hideSoftInputFromWindow(input.getWindowToken(),0);
+        imm.hideSoftInputFromWindow(input.getWindowToken(), 0);
 
-        Toast.makeText(this,
-            "تم استلام رسالتك. ربط الذكاء الاصطناعي هو الخطوة القادمة.",
-            Toast.LENGTH_LONG).show();
+        addMessage("جاري التفكير والاتصال...", false);
+
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+
+            try {
+                URL url = new URL("http://127.0.0.1:5050/chat");
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(90000);
+                connection.setDoOutput(true);
+                connection.setRequestProperty(
+                    "Content-Type", "application/json; charset=UTF-8"
+                );
+
+                JSONObject body = new JSONObject();
+                body.put("message", text);
+
+                try (OutputStream out = connection.getOutputStream()) {
+                    out.write(body.toString().getBytes("UTF-8"));
+                }
+
+                int code = connection.getResponseCode();
+                java.io.InputStream stream =
+                    code >= 200 && code < 300
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
+
+                BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(stream, "UTF-8")
+                );
+
+                StringBuilder result = new StringBuilder();
+                String line;
+
+                while ((line = reader.readLine()) != null) {
+                    result.append(line);
+                }
+                reader.close();
+
+                JSONObject response = new JSONObject(result.toString());
+                String answer = code >= 200 && code < 300
+                    ? response.optString("reply", "لم يصل رد من المساعد")
+                    : response.optString("error", "تعذر الاتصال بالخدمة");
+
+                runOnUiThread(() -> addMessage(answer, false));
+
+            } catch (Exception e) {
+                runOnUiThread(() ->
+                    addMessage(
+                        "تعذر الاتصال بالمساعد. تأكد من تشغيل خادم Termux والإنترنت.",
+                        false
+                    )
+                );
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
     }
 
     void addMessage(String text, boolean user) {
